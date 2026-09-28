@@ -27,10 +27,15 @@ namespace OpenRA.Graphics
 
 	public abstract class ShaderBindings : IShaderBindings
 	{
+		string vertexShaderCode;
+		string fragmentShaderCode;
+
 		public string VertexShaderName { get; }
-		public string VertexShaderCode { get; }
 		public string FragmentShaderName { get; }
-		public string FragmentShaderCode { get; }
+
+		// Loaded on first use, when the graphics context compiles the shader
+		public string VertexShaderCode => vertexShaderCode ??= GetShaderCode(VertexShaderName + ".vert");
+		public string FragmentShaderCode => fragmentShaderCode ??= GetShaderCode(FragmentShaderName + ".frag");
 		public int Stride { get; }
 
 		public abstract ShaderVertexAttribute[] Attributes { get; }
@@ -42,9 +47,7 @@ namespace OpenRA.Graphics
 		{
 			Stride = Attributes.Sum(a => a.Components * 4);
 			VertexShaderName = vertexName;
-			VertexShaderCode = GetShaderCode(VertexShaderName + ".vert");
 			FragmentShaderName = fragmentName;
-			FragmentShaderCode = GetShaderCode(FragmentShaderName + ".frag");
 		}
 
 		public static string GetShaderCode(string filename)

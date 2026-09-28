@@ -223,6 +223,10 @@ namespace OpenRA
 
 			OrderManager.World.GameOver += FinishBenchmark;
 
+			// In XR mode regular games are played on the tabletop board, while the editor and shellmap fill the whole screen
+			if (xrTabletop != null)
+				Renderer.WorldViewport = xrTabletop.WorldRectFor(OrderManager.World.Type);
+
 			worldRenderer = new WorldRenderer(ModData, OrderManager.World);
 
 			// Proactively collect memory during loading to reduce peak memory.
@@ -325,7 +329,11 @@ namespace OpenRA
 		}
 
 		static Modifiers modifiers;
-		public static Modifiers GetModifierKeys() { return modifiers; }
+
+		/// <summary>Modifiers held on the XR controllers. They are combined with the keyboard modifiers.</summary>
+		public static Modifiers XrModifiers { get; internal set; }
+
+		public static Modifiers GetModifierKeys() { return modifiers | XrModifiers; }
 		internal static void HandleModifierKeys(Modifiers mods) { modifiers = mods; }
 
 		public static void InitializeSettings(Arguments args)
@@ -465,7 +473,7 @@ namespace OpenRA
 		static void InitializeXr(IXrDevice xr)
 		{
 			xrTabletop = new XrTabletop(xr, Settings.Xr);
-			Renderer.WorldViewport = xrTabletop.WorldRect;
+			Renderer.WorldViewport = xrTabletop.BoardRect;
 
 			Console.WriteLine($"XR: Tabletop mode enabled ({xr.RuntimeName}, {xr.SystemName}, blend mode {xr.BlendMode}, chroma key {xr.ChromaKeyEnabled})");
 		}
@@ -721,7 +729,7 @@ namespace OpenRA
 				if (xr != null)
 				{
 					xr.BeginFrame();
-					xrTabletop.Update(worldRenderer, OrderManager.World, Renderer.XrQuads);
+					xrTabletop.Update(worldRenderer, OrderManager.World, Renderer.XrQuads, Renderer.UIPanels);
 				}
 
 				// Prepare renderables (i.e. render voxels) before calling BeginFrame
@@ -759,6 +767,7 @@ namespace OpenRA
 						worldRenderer.DrawAnnotations();
 
 					Ui.Draw();
+					xrTabletop?.DrawHandPanel(Renderer);
 
 					if (HideCursor)
 						Cursor?.SetCursor(null);

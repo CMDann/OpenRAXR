@@ -21,6 +21,8 @@ namespace OpenRA.Mods.Common.Widgets
 	public enum TextFieldType { General, Filename, Integer }
 	public class TextFieldWidget : InputWidget
 	{
+		public override bool WantsTextInput => !IsDisabled();
+
 		string text = "";
 		public string Text
 		{

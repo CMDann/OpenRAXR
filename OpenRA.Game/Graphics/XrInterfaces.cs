@@ -70,6 +70,7 @@ namespace OpenRA
 		public bool Menu;
 		public bool ButtonA;
 		public bool ButtonB;
+		public bool StickClick;
 		public Vector2 Stick;
 	}
 
@@ -85,8 +86,14 @@ namespace OpenRA
 	/// </summary>
 	public interface IXrDevice : IDisposable
 	{
-		/// <summary>Size of the offscreen virtual screen that the game UI is laid out on.</summary>
+		/// <summary>Size of the offscreen virtual screen that is rendered each frame.</summary>
 		Size VirtualScreenSize { get; }
+
+		/// <summary>
+		/// The top part of the virtual screen that the game UI is laid out in (reported as the window size).
+		/// The rest is a band reserved for XR-only controls such as the hotkey menu and keyboard.
+		/// </summary>
+		Size LayoutSize { get; }
 
 		/// <summary>True while the runtime expects frames to be submitted.</summary>
 		bool IsSessionRunning { get; }

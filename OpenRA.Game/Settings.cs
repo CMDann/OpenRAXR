@@ -391,8 +391,12 @@ namespace OpenRA
 		[Desc("Background color used by ChromaKey passthrough. Configure the same color in your streaming client (e.g. Virtual Desktop).")]
 		public Color KeyColor = Color.FromArgb(255, 0, 255);
 
-		[Desc("Size of the offscreen virtual screen the game is rendered to.")]
-		public int2 VirtualScreenSize = new(2048, 1024);
+		[Desc("Size of the offscreen virtual screen the game is rendered to, including the hand panel band.")]
+		public int2 VirtualScreenSize = new(2048, 1280);
+
+		[Desc("Height of the band at the bottom of the virtual screen that holds the controller hotkey menu and keyboard.",
+			"The game UI is laid out in the space above it.")]
+		public int HandPanelHeight = 256;
 
 		[Desc("Width of the HUD strip on the right edge of the virtual screen that is shown as a separate sidebar panel.")]
 		public int SidebarWidth = 256;

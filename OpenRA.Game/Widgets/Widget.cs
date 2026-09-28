@@ -294,25 +294,13 @@ namespace OpenRA.Widgets
 			defaultCursor = ChromeMetrics.Get<string>("DefaultCursor");
 
 			// Parse the YAML equations to find the widget bounds
+			var resolution = Game.Renderer.Resolution;
 			var parentBounds = (Parent == null)
-				? new WidgetBounds(0, 0, Game.Renderer.Resolution.Width, Game.Renderer.Resolution.Height)
+				? new WidgetBounds(0, 0, resolution.Width, resolution.Height)
 				: Parent.Bounds;
 
-			var substitutions = args.TryGetValue("substitutions", out var subs) ?
-				new Dictionary<string, int>((Dictionary<string, int>)subs) :
-				[];
-
-			substitutions.Add("WINDOW_WIDTH", Game.Renderer.Resolution.Width);
-			substitutions.Add("WINDOW_HEIGHT", Game.Renderer.Resolution.Height);
-
-			// The part of the window that the world is drawn into. This is the whole window except in XR mode.
-			var worldViewport = Game.Renderer.WorldViewport;
-			substitutions.Add("WORLD_LEFT", worldViewport.Left);
-			substitutions.Add("WORLD_TOP", worldViewport.Top);
-			substitutions.Add("WORLD_WIDTH", worldViewport.Width);
-			substitutions.Add("WORLD_HEIGHT", worldViewport.Height);
-			substitutions.Add("PARENT_WIDTH", parentBounds.Width);
-			substitutions.Add("PARENT_HEIGHT", parentBounds.Height);
+			var substitutions = CreateSubstitutions(resolution, Game.Renderer.WorldViewport, parentBounds,
+				args.TryGetValue("substitutions", out var subs) ? (Dictionary<string, int>)subs : null);
 
 			var readOnlySubstitutions = new ReadOnlyDictionary<string, int>(substitutions);
 			var width = Width?.Evaluate(readOnlySubstitutions) ?? 0;
@@ -324,6 +312,24 @@ namespace OpenRA.Widgets
 			var x = X?.Evaluate(readOnlySubstitutions) ?? 0;
 			var y = Y?.Evaluate(readOnlySubstitutions) ?? 0;
 			Bounds = new WidgetBounds(x, y, width, height);
+		}
+
+		/// <summary>Builds the variables that widget position and size expressions can use.</summary>
+		internal static Dictionary<string, int> CreateSubstitutions(Size resolution, Rectangle worldViewport,
+			WidgetBounds parentBounds, Dictionary<string, int> extra)
+		{
+			var substitutions = extra != null ? new Dictionary<string, int>(extra) : [];
+			substitutions.Add("WINDOW_WIDTH", resolution.Width);
+			substitutions.Add("WINDOW_HEIGHT", resolution.Height);
+
+			// The part of the window that the world is drawn into. This is the whole window except in XR mode.
+			substitutions.Add("WORLD_LEFT", worldViewport.Left);
+			substitutions.Add("WORLD_TOP", worldViewport.Top);
+			substitutions.Add("WORLD_WIDTH", worldViewport.Width);
+			substitutions.Add("WORLD_HEIGHT", worldViewport.Height);
+			substitutions.Add("PARENT_WIDTH", parentBounds.Width);
+			substitutions.Add("PARENT_HEIGHT", parentBounds.Height);
+			return substitutions;
 		}
 
 		public void PostInit(WidgetArgs args)
@@ -464,6 +470,9 @@ namespace OpenRA.Widgets
 		}
 
 		public virtual bool HandleKeyPress(KeyInput e) { return false; }
+
+		/// <summary>True for widgets that accept typed text, so that XR mode can show an on-screen keyboard.</summary>
+		public virtual bool WantsTextInput => false;
 
 		public virtual bool HandleKeyPressOuter(KeyInput e)
 		{

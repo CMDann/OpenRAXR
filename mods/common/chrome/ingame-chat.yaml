@@ -1,5 +1,5 @@
 Container@CHAT_PANEL:
-	X: (WINDOW_WIDTH - WIDTH) / 2
+	X: WORLD_LEFT + (WORLD_WIDTH - WIDTH) / 2
 	Y: WINDOW_HEIGHT - HEIGHT - 56
 	Width: 550
 	Height: 194

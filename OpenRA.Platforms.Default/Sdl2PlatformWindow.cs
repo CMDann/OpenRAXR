@@ -365,7 +365,10 @@ namespace OpenRA.Platforms.Default
 					SDL.SDL_GetWindowSize(Window, out var mirrorWidth, out var mirrorHeight);
 					var virtualSize = xrDevice.VirtualScreenSize;
 					mirrorMouseScale = new System.Numerics.Vector2(virtualSize.Width * 1f / mirrorWidth, virtualSize.Height * 1f / mirrorHeight);
-					windowSize = surfaceSize = virtualSize;
+
+					// The game lays itself out in the top part, the band below holds XR-only controls
+					windowSize = xrDevice.LayoutSize;
+					surfaceSize = virtualSize;
 					windowScale = 1;
 					this.scaleModifier = 1;
 					Console.WriteLine($"XR: Rendering a {virtualSize.Width}x{virtualSize.Height} virtual screen, mirrored to a {mirrorWidth}x{mirrorHeight} window");

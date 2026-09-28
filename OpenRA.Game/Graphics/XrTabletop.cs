@@ -17,17 +17,47 @@ using OpenRA.Widgets;
 
 namespace OpenRA.Graphics
 {
+	/// <summary>The viewport operations that XR controllers can perform directly.</summary>
+	public interface IXrViewportControls
+	{
+		/// <summary>Scrolls the view by the given amount of screen pixels.</summary>
+		void Scroll(Vector2 screenPixels);
+
+		/// <summary>Zooms in (positive) or out (negative) exponentially.</summary>
+		void Zoom(float amount);
+	}
+
+	/// <summary>What the game is currently showing, which decides how the XR panels are laid out.</summary>
+	public readonly record struct XrSceneState(bool HasWorld, WorldType WorldType, bool MenuOpen, bool TextInputFocused, IXrViewportControls Viewport)
+	{
+		/// <summary>A regular game (or replay) without a menu open is played on the board.</summary>
+		public bool Tabletop => HasWorld && WorldType == WorldType.Regular && !MenuOpen;
+
+		/// <summary>The map editor is shown on the upright screen but can still be scrolled with the sticks.</summary>
+		public bool CanNavigate => Viewport != null && HasWorld && !MenuOpen && WorldType != WorldType.Shellmap;
+	}
+
 	/// <summary>
 	/// Lays the game out as a board on a real table with floating HUD panels, and turns controller
-	/// rays into regular mouse input on the virtual screen.
+	/// input into regular mouse, keyboard and modifier input on the virtual screen.
 	/// </summary>
 	public sealed class XrTabletop
 	{
+		public const string BoardQuad = "board";
+		public const string SidebarQuad = "sidebar";
+		public const string ScreenQuad = "screen";
+		public const string HotkeysQuad = "hotkeys";
+		public const string KeyboardQuad = "keyboard";
+		public const string BeamQuad = "beam";
+
 		const float StickDeadzone = 0.2f;
 		const float DoubleClickSeconds = 0.35f;
 		const int DoubleClickDistance = 6;
 		const float BeamWidth = 0.004f;
 		const float BeamMissLength = 0.6f;
+		const float StickPanPixelsPerSecond = 1200f;
+		const float StickZoomPerSecond = 1.5f;
+		const float WheelNotchesPerSecond = 12f;
 
 		// Panel placement relative to the board, in meters
 		const float SidebarGap = 0.03f;
@@ -38,16 +68,19 @@ namespace OpenRA.Graphics
 		const float MenuScreenHeight = 0.45f;
 		const float MenuScreenDistance = 0.2f;
 		const float MenuScreenTilt = -10f;
+		const float HotkeyPanelWidth = 0.26f;
+		const float KeyboardWidth = 0.6f;
 
 		static readonly Color BeamColor = Color.FromArgb(255, 255, 220, 64);
 		static readonly Color BeamPressedColor = Color.FromArgb(255, 64, 255, 96);
 
 		readonly IXrDevice device;
 		readonly XrSettings settings;
+		readonly Func<long> clock;
+		readonly Action saveSettings;
+		readonly Action exit;
 		readonly Size screenSize;
-		readonly Rectangle sidebarRect;
 
-		XrPose boardPose;
 		bool boardPlaced;
 
 		// Board grab state
@@ -60,57 +93,107 @@ namespace OpenRA.Graphics
 		MouseButton heldButtons;
 		string captureQuad;
 		int2 lastMousePos = new(-1, -1);
-		readonly long[] lastDownTime = new long[3];
+		readonly long[] lastDownTime = [long.MinValue / 2, long.MinValue / 2, long.MinValue / 2];
 		readonly int2[] lastDownPos = new int2[3];
 		readonly int[] tapCount = new int[3];
 		XrHandState lastPointer;
 		XrHandState lastOffHand;
 		Widget lastHoverWidget;
+		float wheelAccumulator;
 
 		// Pointer-grip drag panning
 		bool dragPanning;
 		int2 dragPanLast;
 
-		long lastUpdateTime;
+		long lastUpdateTime = -1;
 
 		readonly List<XrQuad> panels = [];
 
-		public XrTabletop(IXrDevice device, XrSettings settings)
+		/// <summary>Creates the tabletop layout for the given headset.</summary>
+		/// <param name="device">The headset.</param>
+		/// <param name="settings">XR settings. The board pose is stored here.</param>
+		/// <param name="clock">Milliseconds since startup. Defaults to <see cref="Game.RunTime"/>.</param>
+		/// <param name="saveSettings">Persists the board pose. Defaults to saving the settings file.</param>
+		/// <param name="lookupHotkey">Returns the player's binding for a named hotkey. Defaults to the mod's hotkeys.</param>
+		/// <param name="exit">Called when the runtime asks the game to quit. Defaults to <see cref="Game.Exit"/>.</param>
+		public XrTabletop(IXrDevice device, XrSettings settings, Func<long> clock = null, Action saveSettings = null,
+			Func<string, Hotkey> lookupHotkey = null, Action exit = null)
 		{
 			this.device = device;
 			this.settings = settings;
+			this.clock = clock ?? (() => Game.RunTime);
+			this.saveSettings = saveSettings ?? settings.Save;
+			this.exit = exit ?? Game.Exit;
+			lookupHotkey ??= name => Game.ModData?.Hotkeys?[name].GetValue() ?? Hotkey.Invalid;
+
 			screenSize = device.VirtualScreenSize;
 
+			// The band below the game's layout area holds the XR-only hotkey menu and keyboard
+			var mainHeight = device.LayoutSize.Height;
+			var bandHeight = screenSize.Height - mainHeight;
 			var sidebarWidth = Math.Clamp(settings.SidebarWidth, 0, screenSize.Width / 2);
-			WorldRect = new Rectangle(0, 0, screenSize.Width - sidebarWidth, screenSize.Height);
-			sidebarRect = new Rectangle(WorldRect.Right, 0, sidebarWidth, screenSize.Height);
+
+			MainRect = new Rectangle(0, 0, screenSize.Width, mainHeight);
+			BoardRect = new Rectangle(0, 0, screenSize.Width - sidebarWidth, mainHeight);
+			SidebarRect = new Rectangle(BoardRect.Right, 0, sidebarWidth, mainHeight);
+			HandPanel = new XrHandPanel(new Rectangle(0, mainHeight, BoardRect.Width, bandHeight), lookupHotkey);
 
 			boardPlaced = settings.BoardPlaced;
-			boardPose = new XrPose(new Vector3(settings.BoardX, settings.BoardY, settings.BoardZ), YawRotationDegrees(settings.BoardYaw));
+			BoardPose = new XrPose(new Vector3(settings.BoardX, settings.BoardY, settings.BoardZ), YawRotationDegrees(settings.BoardYaw));
 		}
 
-		/// <summary>The part of the virtual screen that the world is rendered into (the board).</summary>
-		public Rectangle WorldRect { get; }
+		/// <summary>The part of the virtual screen shown on the board.</summary>
+		public Rectangle BoardRect { get; }
+
+		/// <summary>The strip of the virtual screen shown on the sidebar panel.</summary>
+		public Rectangle SidebarRect { get; }
+
+		/// <summary>The virtual screen without the reserved hand panel band. Shown on the upright menu screen.</summary>
+		public Rectangle MainRect { get; }
+
+		public XrHandPanel HandPanel { get; }
+
+		public XrPose BoardPose { get; private set; }
+
+		/// <summary>The panels shown this frame, not including the pointer beam.</summary>
+		public IReadOnlyList<XrQuad> Panels => panels;
+
+		/// <summary>Regular games are played on the board. The editor and shellmap use the whole screen.</summary>
+		public Rectangle WorldRectFor(WorldType type) => type == WorldType.Regular ? BoardRect : MainRect;
 
 		XrHand PointerHand => settings.LeftHanded ? XrHand.Left : XrHand.Right;
 		XrHand OffHand => settings.LeftHanded ? XrHand.Right : XrHand.Left;
 
 		float BoardWidth => Math.Max(settings.BoardWidth, 0.2f);
-		float BoardDepth => BoardWidth * WorldRect.Height / WorldRect.Width;
+		float BoardDepth => BoardWidth * BoardRect.Height / BoardRect.Width;
 
 		/// <summary>
 		/// Updates the panel layout and feeds controller input into the game. Call once per render frame,
 		/// after <see cref="IXrDevice.BeginFrame"/> and before the UI is drawn.
 		/// </summary>
-		public void Update(WorldRenderer worldRenderer, World inputWorld, List<XrQuad> quads)
+		public void Update(WorldRenderer worldRenderer, World inputWorld, List<XrQuad> quads, List<Rectangle> uiPanels)
 		{
-			var now = Game.RunTime;
-			var dt = lastUpdateTime == 0 ? 0 : Math.Clamp((now - lastUpdateTime) / 1000f, 0, 0.1f);
+			var world = worldRenderer?.World;
+			var hasWorld = world != null && !world.IsLoadingGameSave;
+			var state = new XrSceneState(
+				hasWorld,
+				world?.Type ?? WorldType.Shellmap,
+				IsMenuOpen(),
+				Ui.KeyboardFocusWidget?.WantsTextInput ?? false,
+				hasWorld ? new ViewportControls(worldRenderer.Viewport) : null);
+
+			Update(state, new DefaultInputHandler(inputWorld), quads, uiPanels);
+		}
+
+		internal void Update(XrSceneState state, IInputHandler input, List<XrQuad> quads, List<Rectangle> uiPanels)
+		{
+			var now = clock();
+			var dt = lastUpdateTime < 0 ? 0 : Math.Clamp((now - lastUpdateTime) / 1000f, 0, 0.1f);
 			lastUpdateTime = now;
 
 			if (device.ExitRequested)
 			{
-				Game.Exit();
+				exit();
 				return;
 			}
 
@@ -120,33 +203,78 @@ namespace OpenRA.Graphics
 			var pointer = device.GetHand(PointerHand);
 			var offHand = device.GetHand(OffHand);
 
+			Game.XrModifiers = GetModifiers(pointer, offHand);
+
 			UpdateBoardGrab(offHand);
 
 			// Recenter the board with the off-hand secondary button (Y on Touch controllers)
 			if (offHand.ButtonB && !lastOffHand.ButtonB && device.HeadPoseValid)
 			{
 				PlaceBoardInFrontOfHead();
-				SaveBoardPose();
+				saveSettings();
 			}
-
-			var tabletop = worldRenderer != null && worldRenderer.World.Type == WorldType.Regular
-				&& !worldRenderer.World.IsLoadingGameSave && !IsMenuOpen();
-
-			BuildPanels(tabletop);
-
-			var inputHandler = new DefaultInputHandler(inputWorld);
 
 			// The off-hand menu button opens the game menu (or closes dialogs) like Escape on the keyboard
 			if (offHand.Menu && !lastOffHand.Menu)
-				SendKey(inputHandler, Keycode.ESCAPE);
+			{
+				input.OnKeyInput(new KeyInput { Event = KeyInputEvent.Down, Key = Keycode.ESCAPE, MultiTapCount = 1 });
+				input.OnKeyInput(new KeyInput { Event = KeyInputEvent.Up, Key = Keycode.ESCAPE, MultiTapCount = 1 });
+			}
 
-			if (tabletop && worldRenderer != null && dt > 0)
-				UpdateViewportControls(worldRenderer, pointer, offHand, dt);
+			// Clicking the off-hand thumbstick toggles the hotkey menu above the off hand
+			if (offHand.StickClick && !lastOffHand.StickClick)
+				HandPanel.HotkeysOpen = !HandPanel.HotkeysOpen;
 
-			UpdatePointer(inputHandler, worldRenderer, tabletop, pointer, quads);
+			HandPanel.EditorMode = state.HasWorld && state.WorldType == WorldType.Editor;
+
+			// The keyboard appears whenever a text field is focused, unless the player closed it
+			if (!state.TextInputFocused)
+			{
+				HandPanel.KeyboardOpen = false;
+				HandPanel.KeyboardDismissed = false;
+			}
+			else if (!HandPanel.KeyboardDismissed)
+				HandPanel.KeyboardOpen = true;
+
+			BuildPanels(state.Tabletop, offHand);
+
+			uiPanels.Clear();
+			if (state.Tabletop)
+			{
+				uiPanels.Add(BoardRect);
+				uiPanels.Add(SidebarRect);
+			}
+			else
+				uiPanels.Add(MainRect);
+
+			// Off-hand thumbstick scrolls the map (stick up scrolls towards the far edge of the board)
+			if (state.CanNavigate && dt > 0)
+			{
+				var pan = ApplyDeadzone(offHand.Stick);
+				if (pan != Vector2.Zero)
+					state.Viewport.Scroll(new Vector2(pan.X, -pan.Y) * StickPanPixelsPerSecond * settings.StickPanSpeed * dt);
+			}
+
+			UpdatePointer(input, state, pointer, dt, quads);
 
 			lastPointer = pointer;
 			lastOffHand = offHand;
+		}
+
+		/// <summary>Controller buttons that act like holding Shift, Ctrl or Alt on the keyboard.</summary>
+		static Modifiers GetModifiers(XrHandState pointer, XrHandState offHand)
+		{
+			var modifiers = Modifiers.None;
+			if (offHand.IsActive && offHand.Select)
+				modifiers |= Modifiers.Shift;
+
+			if (offHand.IsActive && offHand.ButtonA)
+				modifiers |= Modifiers.Ctrl;
+
+			if (pointer.IsActive && pointer.ButtonB)
+				modifiers |= Modifiers.Alt;
+
+			return modifiers;
 		}
 
 		static bool IsMenuOpen()
@@ -158,91 +286,126 @@ namespace OpenRA.Graphics
 			return menuRoot != null && menuRoot.Children.Count > 0;
 		}
 
-		void BuildPanels(bool tabletop)
+		void BuildPanels(bool tabletop, XrHandState offHand)
 		{
 			panels.Clear();
 			if (tabletop)
 			{
 				// Lay the world flat on the table: rotate the quad's +Z normal to point up and the top of the image away from the player
 				var boardOrientation = Quaternion.CreateFromAxisAngle(Vector3.UnitX, -MathF.PI / 2);
-				panels.Add(new XrQuad("board", WorldRect, boardPose.Multiply(new XrPose(Vector3.Zero, boardOrientation)),
+				panels.Add(new XrQuad(BoardQuad, BoardRect, BoardPose.Multiply(new XrPose(Vector3.Zero, boardOrientation)),
 					new Vector2(BoardWidth, BoardDepth)));
 
-				if (sidebarRect.Width > 0)
+				if (SidebarRect.Width > 0)
 				{
-					var pixelsPerMeter = WorldRect.Width / BoardWidth / SidebarScale;
-					var size = new Vector2(sidebarRect.Width / pixelsPerMeter, sidebarRect.Height / pixelsPerMeter);
+					var pixelsPerMeter = BoardRect.Width / BoardWidth / SidebarScale;
+					var size = new Vector2(SidebarRect.Width / pixelsPerMeter, SidebarRect.Height / pixelsPerMeter);
 					var tilt = Quaternion.CreateFromAxisAngle(Vector3.UnitX, SidebarTilt * MathF.PI / 180);
 					var yaw = Quaternion.CreateFromAxisAngle(Vector3.UnitY, SidebarYaw * MathF.PI / 180);
 					var center = new Vector3(BoardWidth / 2 + SidebarGap + size.X / 2, size.Y / 2 * MathF.Cos(-SidebarTilt * MathF.PI / 180), -BoardDepth / 4);
-					panels.Add(new XrQuad("sidebar", sidebarRect, boardPose.Multiply(new XrPose(center, yaw * tilt)), size));
+					panels.Add(new XrQuad(SidebarQuad, SidebarRect, BoardPose.Multiply(new XrPose(center, yaw * tilt)), size));
 				}
 			}
 			else
 			{
-				// Menus, the lobby and dialogs are shown on an upright screen behind the board
+				// Menus, the lobby, dialogs and the map editor are shown on an upright screen behind the board
 				var tilt = Quaternion.CreateFromAxisAngle(Vector3.UnitX, MenuScreenTilt * MathF.PI / 180);
-				var height = MenuScreenWidth * screenSize.Height / screenSize.Width;
+				var height = MenuScreenWidth * MainRect.Height / MainRect.Width;
 				var center = new Vector3(0, MenuScreenHeight, -BoardDepth / 2 - MenuScreenDistance);
-				panels.Add(new XrQuad("screen", new Rectangle(int2.Zero, screenSize), boardPose.Multiply(new XrPose(center, tilt)),
+				panels.Add(new XrQuad(ScreenQuad, MainRect, BoardPose.Multiply(new XrPose(center, tilt)),
 					new Vector2(MenuScreenWidth, height)));
+			}
+
+			// The hotkey menu floats above the off hand, tilted towards the player like a wristwatch
+			var hotkeys = HandPanel.HotkeyRect;
+			if (HandPanel.HotkeysOpen && offHand.IsActive && hotkeys.Height > 0)
+			{
+				var size = new Vector2(HotkeyPanelWidth, HotkeyPanelWidth * hotkeys.Height / hotkeys.Width);
+				var faceUp = Quaternion.CreateFromAxisAngle(Vector3.UnitX, -50 * MathF.PI / 180);
+				var pose = offHand.Grip.Multiply(new XrPose(new Vector3(0, 0.06f, 0.02f), faceUp));
+				panels.Add(new XrQuad(HotkeysQuad, hotkeys, pose, size));
+			}
+
+			// The keyboard lies at the near edge of the table like a laptop keyboard
+			var keyboard = HandPanel.KeyboardRect;
+			if (HandPanel.KeyboardOpen && keyboard.Height > 0)
+			{
+				var size = new Vector2(KeyboardWidth, KeyboardWidth * keyboard.Height / keyboard.Width);
+				var tilt = Quaternion.CreateFromAxisAngle(Vector3.UnitX, -60 * MathF.PI / 180);
+				var center = new Vector3(0, 0.06f, BoardDepth / 2 + 0.02f);
+				panels.Add(new XrQuad(KeyboardQuad, keyboard, BoardPose.Multiply(new XrPose(center, tilt)), size));
 			}
 		}
 
-		void UpdatePointer(DefaultInputHandler inputHandler, WorldRenderer worldRenderer, bool tabletop, XrHandState pointer, List<XrQuad> quads)
+		void UpdatePointer(IInputHandler input, XrSceneState state, XrHandState pointer, float dt, List<XrQuad> quads)
 		{
 			quads.Clear();
 			quads.AddRange(panels);
+			HandPanel.Hover = null;
 
 			if (!pointer.IsActive)
 			{
-				ReleaseButtons(inputHandler);
+				ReleaseButtons(input);
 				return;
 			}
 
 			var hit = Raycast(pointer.Aim, captureQuad);
 			var modifiers = Game.GetModifierKeys();
 
-			if (hit != null)
+			if (hit != null && (hit.Value.Quad == HotkeysQuad || hit.Value.Quad == KeyboardQuad))
+			{
+				// The hand panel is XR-only UI and handles its own clicks
+				HandPanel.Hover = hit.Value.Pixel;
+				if (pointer.Select && !lastPointer.Select && HandPanel.Click(hit.Value.Pixel, input, modifiers))
+					Vibrate(PointerHand, 0.35f, 0.02f);
+			}
+			else if (hit != null)
 			{
 				var pos = hit.Value.Pixel;
 				if (pos != lastMousePos)
 				{
 					var delta = lastMousePos.X < 0 ? int2.Zero : pos - lastMousePos;
-					inputHandler.OnMouseInput(new MouseInput(MouseInputEvent.Move, heldButtons, pos, delta, modifiers, 0));
+					input.OnMouseInput(new MouseInput(MouseInputEvent.Move, heldButtons, pos, delta, modifiers, 0));
 					lastMousePos = pos;
 				}
 
-				UpdateButton(inputHandler, MouseButton.Left, pointer.Select, lastPointer.Select, hit.Value.Quad, modifiers);
-				UpdateButton(inputHandler, MouseButton.Right, pointer.Order, lastPointer.Order, hit.Value.Quad, modifiers);
+				UpdateButton(input, MouseButton.Left, pointer.Select, lastPointer.Select, hit.Value.Quad, modifiers);
+				UpdateButton(input, MouseButton.Right, pointer.Order, lastPointer.Order, hit.Value.Quad, modifiers);
 
-				// Squeezing the pointer grip over the board grabs the map and drags it like a sheet of paper
-				if (tabletop && worldRenderer != null && hit.Value.Quad == "board")
+				if (hit.Value.Quad == BoardQuad)
 				{
-					if (pointer.Grab && !dragPanning)
+					wheelAccumulator = 0;
+
+					// Pointer thumbstick zooms the board
+					var zoom = ApplyDeadzone(pointer.Stick).Y;
+					if (zoom != 0 && state.CanNavigate && dt > 0)
+						state.Viewport.Zoom(zoom * StickZoomPerSecond * dt);
+
+					// Squeezing the pointer grip over the board grabs the map and drags it like a sheet of paper
+					if (pointer.Grab && state.CanNavigate)
 					{
+						if (dragPanning)
+						{
+							var d = dragPanLast - pos;
+							if (d != int2.Zero)
+								state.Viewport.Scroll(d.ToVector2());
+						}
+
 						dragPanning = true;
 						dragPanLast = pos;
 					}
-					else if (pointer.Grab && dragPanning)
-					{
-						var d = dragPanLast - pos;
-						if (d != int2.Zero)
-							worldRenderer.Viewport.Scroll(d.ToVector2(), false);
-
-						// The map moved under the pointer, so the same pixel now shows the dragged spot
-						dragPanLast = pos;
-					}
 				}
+				else
+					UpdateWheel(input, pointer, pos, dt, modifiers);
 			}
 			else
 			{
 				// Releasing a button while pointing away from every panel must still release it in the game
 				if (!pointer.Select && lastPointer.Select)
-					UpdateButton(inputHandler, MouseButton.Left, false, true, null, modifiers);
+					UpdateButton(input, MouseButton.Left, false, true, null, modifiers);
 
 				if (!pointer.Order && lastPointer.Order)
-					UpdateButton(inputHandler, MouseButton.Right, false, true, null, modifiers);
+					UpdateButton(input, MouseButton.Right, false, true, null, modifiers);
 			}
 
 			if (!pointer.Grab)
@@ -253,7 +416,7 @@ namespace OpenRA.Graphics
 			if (hover != lastHoverWidget)
 			{
 				if (hover != null && hover.Parent?.Id != "WORLD_ROOT")
-					device.Vibrate(PointerHand, 0.15f, 0.01f);
+					Vibrate(PointerHand, 0.15f, 0.01f);
 
 				lastHoverWidget = hover;
 			}
@@ -261,7 +424,26 @@ namespace OpenRA.Graphics
 			quads.Add(BuildBeam(pointer.Aim, hit?.Distance ?? BeamMissLength, pointer.Select || pointer.Order));
 		}
 
-		void UpdateButton(DefaultInputHandler inputHandler, MouseButton button, bool down, bool wasDown, string quad, Modifiers modifiers)
+		/// <summary>On the sidebar and menus the pointer thumbstick acts as a mouse wheel.</summary>
+		void UpdateWheel(IInputHandler input, XrHandState pointer, int2 pos, float dt, Modifiers modifiers)
+		{
+			var y = ApplyDeadzone(pointer.Stick).Y;
+			if (y == 0)
+			{
+				wheelAccumulator = 0;
+				return;
+			}
+
+			wheelAccumulator += y * WheelNotchesPerSecond * dt;
+			while (MathF.Abs(wheelAccumulator) >= 1)
+			{
+				var notch = MathF.Sign(wheelAccumulator);
+				input.OnMouseInput(new MouseInput(MouseInputEvent.Scroll, MouseButton.None, pos, new int2(0, notch), modifiers, 0));
+				wheelAccumulator -= notch;
+			}
+		}
+
+		void UpdateButton(IInputHandler input, MouseButton button, bool down, bool wasDown, string quad, Modifiers modifiers)
 		{
 			if (down == wasDown)
 				return;
@@ -269,7 +451,7 @@ namespace OpenRA.Graphics
 			var index = button == MouseButton.Left ? 0 : button == MouseButton.Right ? 1 : 2;
 			if (down)
 			{
-				var now = Game.RunTime;
+				var now = clock();
 				var isRepeat = (now - lastDownTime[index]) / 1000f < DoubleClickSeconds
 					&& (lastMousePos - lastDownPos[index]).LengthSquared <= DoubleClickDistance * DoubleClickDistance;
 
@@ -279,8 +461,8 @@ namespace OpenRA.Graphics
 
 				heldButtons |= button;
 				captureQuad = quad;
-				inputHandler.OnMouseInput(new MouseInput(MouseInputEvent.Down, button, lastMousePos, int2.Zero, modifiers, tapCount[index]));
-				device.Vibrate(PointerHand, 0.35f, 0.02f);
+				input.OnMouseInput(new MouseInput(MouseInputEvent.Down, button, lastMousePos, int2.Zero, modifiers, tapCount[index]));
+				Vibrate(PointerHand, 0.35f, 0.02f);
 			}
 			else
 			{
@@ -288,44 +470,26 @@ namespace OpenRA.Graphics
 				if (heldButtons == MouseButton.None)
 					captureQuad = null;
 
-				inputHandler.OnMouseInput(new MouseInput(MouseInputEvent.Up, button, lastMousePos, int2.Zero, modifiers, tapCount[index]));
+				input.OnMouseInput(new MouseInput(MouseInputEvent.Up, button, lastMousePos, int2.Zero, modifiers, tapCount[index]));
 			}
 		}
 
-		void ReleaseButtons(DefaultInputHandler inputHandler)
+		void ReleaseButtons(IInputHandler input)
 		{
 			var modifiers = Game.GetModifierKeys();
 			if (heldButtons.HasFlag(MouseButton.Left))
-				UpdateButton(inputHandler, MouseButton.Left, false, true, null, modifiers);
+				UpdateButton(input, MouseButton.Left, false, true, null, modifiers);
 
 			if (heldButtons.HasFlag(MouseButton.Right))
-				UpdateButton(inputHandler, MouseButton.Right, false, true, null, modifiers);
+				UpdateButton(input, MouseButton.Right, false, true, null, modifiers);
 
 			dragPanning = false;
 		}
 
-		static void SendKey(DefaultInputHandler inputHandler, Keycode key)
+		void Vibrate(XrHand hand, float amplitude, float seconds)
 		{
-			inputHandler.OnKeyInput(new KeyInput { Event = KeyInputEvent.Down, Key = key, MultiTapCount = 1 });
-			inputHandler.OnKeyInput(new KeyInput { Event = KeyInputEvent.Up, Key = key, MultiTapCount = 1 });
-		}
-
-		void UpdateViewportControls(WorldRenderer worldRenderer, XrHandState pointer, XrHandState offHand, float dt)
-		{
-			var viewport = worldRenderer.Viewport;
-
-			// Off-hand thumbstick pans the map (stick up scrolls towards the far edge of the board)
-			var pan = ApplyDeadzone(offHand.Stick);
-			if (pan != Vector2.Zero)
-			{
-				var speed = 1200f * settings.StickPanSpeed * dt;
-				viewport.Scroll(new Vector2(pan.X, -pan.Y) * speed, false);
-			}
-
-			// Pointer thumbstick zooms in and out
-			var zoom = ApplyDeadzone(pointer.Stick).Y;
-			if (zoom != 0)
-				viewport.AdjustZoom(zoom * 1.5f * dt);
+			if (settings.Haptics)
+				device.Vibrate(hand, amplitude, seconds);
 		}
 
 		static Vector2 ApplyDeadzone(Vector2 stick)
@@ -348,20 +512,21 @@ namespace OpenRA.Graphics
 				if (!grabbing)
 				{
 					grabbing = true;
-					grabOffset = Vector3.Transform(boardPose.Position - offHand.Grip.Position, Quaternion.Inverse(YawRotation(yaw)));
-					grabYawOffset = HeadingOf(boardPose.Forward, 0) - yaw;
-					device.Vibrate(OffHand, 0.4f, 0.03f);
+					grabOffset = Vector3.Transform(BoardPose.Position - offHand.Grip.Position, Quaternion.Inverse(YawRotation(yaw)));
+					grabYawOffset = HeadingOf(BoardPose.Forward, 0) - yaw;
+					Vibrate(OffHand, 0.4f, 0.03f);
 				}
 
 				var boardYaw = yaw + grabYawOffset;
 				var position = offHand.Grip.Position + Vector3.Transform(grabOffset, YawRotation(yaw));
-				boardPose = new XrPose(position, YawRotation(boardYaw));
+				BoardPose = new XrPose(position, YawRotation(boardYaw));
 				boardPlaced = true;
+				StoreBoardPose();
 			}
 			else if (grabbing)
 			{
 				grabbing = false;
-				SaveBoardPose();
+				saveSettings();
 			}
 		}
 
@@ -373,18 +538,18 @@ namespace OpenRA.Graphics
 
 			// A comfortable seated tabletop: the near edge a short reach in front of the player, below eye level
 			var position = head.Position + forward * (0.25f + BoardDepth / 2) - new Vector3(0, 0.45f, 0);
-			boardPose = new XrPose(position, YawRotation(yaw));
+			BoardPose = new XrPose(position, YawRotation(yaw));
 			boardPlaced = true;
+			StoreBoardPose();
 		}
 
-		void SaveBoardPose()
+		void StoreBoardPose()
 		{
 			settings.BoardPlaced = true;
-			settings.BoardX = boardPose.Position.X;
-			settings.BoardY = boardPose.Position.Y;
-			settings.BoardZ = boardPose.Position.Z;
-			settings.BoardYaw = HeadingOf(boardPose.Forward, 0) * 180 / MathF.PI;
-			settings.Save();
+			settings.BoardX = BoardPose.Position.X;
+			settings.BoardY = BoardPose.Position.Y;
+			settings.BoardZ = BoardPose.Position.Z;
+			settings.BoardYaw = HeadingOf(BoardPose.Forward, 0) * 180 / MathF.PI;
 		}
 
 		/// <summary>Returns the rotation around +Y (in radians) that turns -Z to face along the given direction projected onto the floor.</summary>
@@ -399,6 +564,8 @@ namespace OpenRA.Graphics
 		static Quaternion YawRotation(float radians) => Quaternion.CreateFromAxisAngle(Vector3.UnitY, radians);
 
 		static Quaternion YawRotationDegrees(float degrees) => YawRotation(degrees * MathF.PI / 180);
+
+		public void DrawHandPanel(Renderer renderer) => HandPanel.Draw(renderer);
 
 		public readonly record struct RayHit(string Quad, int2 Pixel, float Distance);
 
@@ -485,8 +652,14 @@ namespace OpenRA.Graphics
 
 			var orientation = Quaternion.CreateFromRotationMatrix(basis);
 			var center = aim.Position + direction * (length / 2);
-			return new XrQuad("beam", Rectangle.Empty, new XrPose(center, orientation), new Vector2(BeamWidth, length),
+			return new XrQuad(BeamQuad, Rectangle.Empty, new XrPose(center, orientation), new Vector2(BeamWidth, length),
 				pressed ? BeamPressedColor : BeamColor);
+		}
+
+		sealed class ViewportControls(Viewport viewport) : IXrViewportControls
+		{
+			public void Scroll(Vector2 screenPixels) => viewport.Scroll(screenPixels, false);
+			public void Zoom(float amount) => viewport.AdjustZoom(amount);
 		}
 	}
 }

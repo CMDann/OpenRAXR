@@ -334,13 +334,23 @@ namespace OpenRA.Graphics
 		float UIScale => Game.Renderer.Xr != null ? 1f : graphicSettings.UIScale;
 
 		public int2 ViewToWorldPx(int2 view)
-			=> int2.FromVector(UIScale / Zoom * (view.ToVector2() - WorldViewportOrigin) + CenterLocation - (ViewportSize.ToInt2() / 2).ToVector2());
+			=> ViewToWorldPx(view, UIScale, Zoom, WorldViewportOrigin, CenterLocation, ViewportSize);
 
 		public int2 WorldToViewPx(int2 world)
-			=> int2.FromVector(Zoom / UIScale * (world.ToVector2() - CenterLocation + (ViewportSize.ToInt2() / 2).ToVector2()) + WorldViewportOrigin);
+			=> WorldToViewPx(world, UIScale, Zoom, WorldViewportOrigin, CenterLocation, ViewportSize);
 
 		public int2 WorldToViewPx(in Vector3 world)
-			=> int2.FromVector(Zoom / UIScale * (world.AsVector2() - CenterLocation + ViewportSize.ToVector2() / 2) + WorldViewportOrigin);
+			=> WorldToViewPx(world, UIScale, Zoom, WorldViewportOrigin, CenterLocation, ViewportSize);
+
+		/// <summary>Converts view (window) coordinates to world pixels. Origin is where the world viewport starts in the window.</summary>
+		internal static int2 ViewToWorldPx(int2 view, float uiScale, float zoom, Vector2 origin, Vector2 center, Size viewportSize)
+			=> int2.FromVector(uiScale / zoom * (view.ToVector2() - origin) + center - (viewportSize.ToInt2() / 2).ToVector2());
+
+		internal static int2 WorldToViewPx(int2 world, float uiScale, float zoom, Vector2 origin, Vector2 center, Size viewportSize)
+			=> int2.FromVector(zoom / uiScale * (world.ToVector2() - center + (viewportSize.ToInt2() / 2).ToVector2()) + origin);
+
+		internal static int2 WorldToViewPx(in Vector3 world, float uiScale, float zoom, Vector2 origin, Vector2 center, Size viewportSize)
+			=> int2.FromVector(zoom / uiScale * (world.AsVector2() - center + viewportSize.ToVector2() / 2) + origin);
 
 		public void Center(IEnumerable<Actor> actors)
 		{

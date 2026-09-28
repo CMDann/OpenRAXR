@@ -152,12 +152,15 @@ namespace OpenRA.Mods.Common.Widgets
 			else if (PanelAlign == TextAlign.Center)
 				panelX += (Bounds.Width - oldBounds.Width) / 2;
 
+			// Keep the list on the screen, or in XR mode on the same panel as the button
+			var screenBounds = Game.Renderer.GetPanelBounds(RenderOrigin);
+
 			var panelY = RenderOrigin.Y + Bounds.Height - panelRoot.RenderOrigin.Y;
-			if (panelY + oldBounds.Height > Game.Renderer.Resolution.Height)
+			if (panelY + oldBounds.Height > screenBounds.Bottom)
 				panelY -= Bounds.Height + oldBounds.Height;
 
 			var buttonRightEdge = RenderOrigin.X + Bounds.Width - panelRoot.RenderOrigin.X;
-			if (panelX + oldBounds.Width > Game.Renderer.Resolution.Width)
+			if (panelX + oldBounds.Width > screenBounds.Right)
 				panelX = buttonRightEdge - oldBounds.Width;
 
 			panel.Bounds = new WidgetBounds(

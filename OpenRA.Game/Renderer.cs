@@ -66,6 +66,22 @@ namespace OpenRA
 		/// <summary>Quads to present in the headset for the current frame.</summary>
 		public readonly List<XrQuad> XrQuads = [];
 
+		/// <summary>
+		/// Regions of the screen that are shown as separate panels (in XR mode). Popups such as tooltips are kept
+		/// inside the panel under the cursor so they are not split across two panels. Empty on the desktop.
+		/// </summary>
+		public readonly List<Rectangle> UIPanels = [];
+
+		/// <summary>Returns the panel containing the given point, or the whole screen if there are no panels.</summary>
+		public Rectangle GetPanelBounds(int2 pos)
+		{
+			foreach (var panel in UIPanels)
+				if (panel.Contains(pos))
+					return panel;
+
+			return new Rectangle(int2.Zero, Resolution);
+		}
+
 		Rectangle worldViewport;
 
 		/// <summary>
@@ -582,7 +598,7 @@ namespace OpenRA
 		public void Dispose()
 		{
 			worldBuffer?.Dispose();
-			screenBuffer.Dispose();
+			screenBuffer?.Dispose();
 			bufferSnapshot.Dispose();
 			tempVertexBuffer.Dispose();
 			quadIndexBuffer.Dispose();

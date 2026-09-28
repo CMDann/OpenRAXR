@@ -63,7 +63,7 @@ namespace OpenRA.Platforms.Default
 		uint copyFramebuffer;
 
 		ActionSet actionSet;
-		XrAction aimAction, gripAction, selectAction, orderAction, grabAction, menuAction, buttonAAction, buttonBAction, stickAction, hapticAction;
+		XrAction aimAction, gripAction, selectAction, orderAction, grabAction, menuAction, buttonAAction, buttonBAction, stickAction, stickClickAction, hapticAction;
 		readonly HandActions[] hands = [new(), new()];
 
 		SessionState sessionState = SessionState.Unknown;
@@ -72,6 +72,7 @@ namespace OpenRA.Platforms.Default
 		XrPose headPose = XrPose.Identity;
 
 		public Size VirtualScreenSize { get; }
+		public Size LayoutSize { get; }
 		public bool IsSessionRunning { get; private set; }
 		public bool IsFocused => sessionState == SessionState.Focused;
 		public bool ExitRequested { get; private set; }
@@ -93,6 +94,8 @@ namespace OpenRA.Platforms.Default
 			SystemName = systemName;
 
 			VirtualScreenSize = new Size(Math.Max(settings.VirtualScreenSize.X, 640), Math.Max(settings.VirtualScreenSize.Y, 480));
+			var band = Math.Clamp(settings.HandPanelHeight, 0, VirtualScreenSize.Height - 480);
+			LayoutSize = new Size(VirtualScreenSize.Width, VirtualScreenSize.Height - band);
 			BlendMode = blendMode == EnvironmentBlendMode.AlphaBlend ? XrBlendMode.AlphaBlend :
 				blendMode == EnvironmentBlendMode.Additive ? XrBlendMode.Additive : XrBlendMode.Opaque;
 
@@ -314,6 +317,7 @@ namespace OpenRA.Platforms.Default
 			buttonAAction = CreateAction("button_a", "Primary Button", ActionType.BooleanInput);
 			buttonBAction = CreateAction("button_b", "Secondary Button", ActionType.BooleanInput);
 			stickAction = CreateAction("stick", "Pan / Zoom", ActionType.Vector2fInput);
+			stickClickAction = CreateAction("stick_click", "Hotkey Menu", ActionType.BooleanInput);
 			hapticAction = CreateAction("haptic", "Vibration", ActionType.VibrationOutput);
 
 			// Oculus Touch is what Virtual Desktop, Steam Link and ALVR present to SteamVR for Quest headsets
@@ -327,6 +331,7 @@ namespace OpenRA.Platforms.Default
 				(buttonBAction, "/user/hand/left/input/y/click"), (buttonBAction, "/user/hand/right/input/b/click"),
 				(menuAction, "/user/hand/left/input/menu/click"),
 				(stickAction, "/user/hand/left/input/thumbstick"), (stickAction, "/user/hand/right/input/thumbstick"),
+				(stickClickAction, "/user/hand/left/input/thumbstick/click"), (stickClickAction, "/user/hand/right/input/thumbstick/click"),
 				(hapticAction, "/user/hand/left/output/haptic"), (hapticAction, "/user/hand/right/output/haptic"),
 			]);
 
@@ -340,6 +345,7 @@ namespace OpenRA.Platforms.Default
 				(buttonBAction, "/user/hand/left/input/b/click"), (buttonBAction, "/user/hand/right/input/b/click"),
 				(menuAction, "/user/hand/left/input/system/click"),
 				(stickAction, "/user/hand/left/input/thumbstick"), (stickAction, "/user/hand/right/input/thumbstick"),
+				(stickClickAction, "/user/hand/left/input/thumbstick/click"), (stickClickAction, "/user/hand/right/input/thumbstick/click"),
 				(hapticAction, "/user/hand/left/output/haptic"), (hapticAction, "/user/hand/right/output/haptic"),
 			]);
 
@@ -348,7 +354,7 @@ namespace OpenRA.Platforms.Default
 				(gripAction, "/user/hand/left/input/grip/pose"), (gripAction, "/user/hand/right/input/grip/pose"),
 				(selectAction, "/user/hand/left/input/trigger/click"), (selectAction, "/user/hand/right/input/trigger/click"),
 				(grabAction, "/user/hand/left/input/squeeze/click"), (grabAction, "/user/hand/right/input/squeeze/click"),
-				(orderAction, "/user/hand/left/input/trackpad/click"), (orderAction, "/user/hand/right/input/trackpad/click"),
+				(orderAction, "/user/hand/right/input/trackpad/click"), (stickClickAction, "/user/hand/left/input/trackpad/click"),
 				(menuAction, "/user/hand/left/input/menu/click"),
 				(stickAction, "/user/hand/left/input/trackpad"), (stickAction, "/user/hand/right/input/trackpad"),
 				(hapticAction, "/user/hand/left/output/haptic"), (hapticAction, "/user/hand/right/output/haptic"),
@@ -535,6 +541,7 @@ namespace OpenRA.Platforms.Default
 				s.Menu = GetBool(menuAction, hand.Path);
 				s.ButtonA = GetBool(buttonAAction, hand.Path);
 				s.ButtonB = GetBool(buttonBAction, hand.Path);
+				s.StickClick = GetBool(stickClickAction, hand.Path);
 				s.Stick = GetVector2(stickAction, hand.Path);
 			}
 		}
