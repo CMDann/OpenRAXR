@@ -304,6 +304,13 @@ namespace OpenRA.Widgets
 
 			substitutions.Add("WINDOW_WIDTH", Game.Renderer.Resolution.Width);
 			substitutions.Add("WINDOW_HEIGHT", Game.Renderer.Resolution.Height);
+
+			// The part of the window that the world is drawn into. This is the whole window except in XR mode.
+			var worldViewport = Game.Renderer.WorldViewport;
+			substitutions.Add("WORLD_LEFT", worldViewport.Left);
+			substitutions.Add("WORLD_TOP", worldViewport.Top);
+			substitutions.Add("WORLD_WIDTH", worldViewport.Width);
+			substitutions.Add("WORLD_HEIGHT", worldViewport.Height);
 			substitutions.Add("PARENT_WIDTH", parentBounds.Width);
 			substitutions.Add("PARENT_HEIGHT", parentBounds.Height);
 

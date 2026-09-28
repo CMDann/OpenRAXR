@@ -33,6 +33,8 @@ namespace OpenRA.Platforms.Default
 		readonly Lock syncObject = new();
 		readonly Size windowSize;
 		Size surfaceSize;
+		OpenXrDevice xrDevice;
+		System.Numerics.Vector2 mirrorMouseScale = System.Numerics.Vector2.One;
 		float windowScale = 1f;
 		int2? lockedMousePosition;
 		float scaleModifier;
@@ -95,6 +97,11 @@ namespace OpenRA.Platforms.Default
 
 		public int CurrentDisplay => SDL.SDL_GetWindowDisplayIndex(window);
 
+		public IXrDevice Xr => xrDevice;
+
+		/// <summary>Scale from desktop window pixels to game coordinates when the window mirrors the XR virtual screen.</summary>
+		internal System.Numerics.Vector2 MirrorMouseScale => mirrorMouseScale;
+
 		public int DisplayCount => SDL.SDL_GetNumVideoDisplays();
 
 		public bool HasInputFocus { get; internal set; }
@@ -140,6 +147,14 @@ namespace OpenRA.Platforms.Default
 			lock (syncObject)
 			{
 				this.scaleModifier = scaleModifier;
+
+				// XR mode renders a fixed-size virtual screen that is mirrored into a regular desktop window
+				if (Game.Settings.Xr.Enabled)
+				{
+					xrDevice = OpenXrDevice.TryCreate(Game.Settings.Xr);
+					if (xrDevice != null)
+						windowMode = WindowMode.Windowed;
+				}
 
 				// Disable legacy scaling on Windows
 				if (Platform.CurrentPlatform == PlatformType.Windows)
@@ -222,6 +237,14 @@ namespace OpenRA.Platforms.Default
 				}
 				else
 					surfaceSize = windowSize = new Size((int)(requestEffectiveWindowSize.Width * windowScale), (int)(requestEffectiveWindowSize.Height * windowScale));
+
+				// Give the mirror window the same aspect ratio as the XR virtual screen
+				if (xrDevice != null)
+				{
+					var virtualSize = xrDevice.VirtualScreenSize;
+					var mirrorWidth = requestEffectiveWindowSize.Width > 0 ? windowSize.Width : display.w / 2;
+					surfaceSize = windowSize = new Size(mirrorWidth, mirrorWidth * virtualSize.Height / virtualSize.Width);
+				}
 
 				Console.WriteLine($"Using resolution: {windowSize.Width}x{windowSize.Height}");
 
@@ -336,6 +359,18 @@ namespace OpenRA.Platforms.Default
 					}
 				}
 
+				if (xrDevice != null)
+				{
+					// Report the virtual screen as the window so that the whole game lays itself out for it
+					SDL.SDL_GetWindowSize(Window, out var mirrorWidth, out var mirrorHeight);
+					var virtualSize = xrDevice.VirtualScreenSize;
+					mirrorMouseScale = new System.Numerics.Vector2(virtualSize.Width * 1f / mirrorWidth, virtualSize.Height * 1f / mirrorHeight);
+					windowSize = surfaceSize = virtualSize;
+					windowScale = 1;
+					this.scaleModifier = 1;
+					Console.WriteLine($"XR: Rendering a {virtualSize.Width}x{virtualSize.Height} virtual screen, mirrored to a {mirrorWidth}x{mirrorHeight} window");
+				}
+
 				Console.WriteLine($"Using window scale {windowScale:F2}");
 			}
 
@@ -343,7 +378,8 @@ namespace OpenRA.Platforms.Default
 			// The calling thread will then have more time to process other tasks, since rendering happens in parallel.
 			// If the calling thread is the main game thread, this means it can run more logic and render ticks.
 			// This is disabled when running in windowed mode on Windows because it breaks the ability to minimize/restore the window.
-			if (Platform.CurrentPlatform == PlatformType.Windows && windowMode == WindowMode.Windowed)
+			// XR mode also renders on the main thread, because OpenXR must share the GL context from the thread that submits frames.
+			if ((Platform.CurrentPlatform == PlatformType.Windows && windowMode == WindowMode.Windowed) || xrDevice != null)
 			{
 				var ctx = new Sdl2GraphicsContext(this);
 				ctx.InitializeOpenGL();
@@ -352,7 +388,24 @@ namespace OpenRA.Platforms.Default
 			else
 				Context = new ThreadedGraphicsContext(new Sdl2GraphicsContext(this), vertexBatchSize, indexBatchSize);
 
-			Context.SetVSyncEnabled(Game.Settings.Graphics.VSync);
+			if (xrDevice != null)
+			{
+				try
+				{
+					xrDevice.InitializeSession();
+				}
+				catch (Exception e)
+				{
+					Log.Write("graphics", "Failed to create the OpenXR session.");
+					Log.Write("graphics", e);
+					Console.WriteLine($"XR: Failed to create the session: {e.Message}. Continuing in mirror-only mode.");
+					xrDevice.Dispose();
+					xrDevice = null;
+				}
+			}
+
+			// The headset paces rendering in XR mode, so the desktop mirror must not block on the monitor refresh
+			Context.SetVSyncEnabled(xrDevice == null && Game.Settings.Graphics.VSync);
 
 			SDL.SDL_SetModState(SDL.SDL_Keymod.KMOD_NONE);
 			input = new Sdl2Input();
@@ -472,6 +525,9 @@ namespace OpenRA.Platforms.Default
 				return;
 
 			disposed = true;
+
+			xrDevice?.Dispose();
+			xrDevice = null;
 
 			Context?.Dispose();
 
@@ -612,6 +668,10 @@ namespace OpenRA.Platforms.Default
 
 		public void SetScaleModifier(float scale)
 		{
+			// The XR virtual screen always uses a 1:1 scale
+			if (mirrorMouseScale != System.Numerics.Vector2.One)
+				return;
+
 			var oldScaleModifier = scaleModifier;
 			scaleModifier = scale;
 			OnWindowScaleChanged(windowScale, windowScale * oldScaleModifier, windowScale, windowScale * scaleModifier);

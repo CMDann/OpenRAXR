@@ -42,6 +42,11 @@ namespace OpenRA.Platforms.Default
 
 		static int2 EventPosition(Sdl2PlatformWindow device, int x, int y)
 		{
+			// In XR mode the desktop window shows a scaled mirror of the virtual screen
+			var mirror = device.MirrorMouseScale;
+			if (mirror != System.Numerics.Vector2.One)
+				return new int2((int)(x * mirror.X), (int)(y * mirror.Y));
+
 			// On Windows and Linux (X11) events are given in surface coordinates
 			// These must be scaled to our effective window coordinates
 			// Round fractional components up to avoid rounding small deltas to 0

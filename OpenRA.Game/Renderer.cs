@@ -59,6 +59,39 @@ namespace OpenRA
 		Size lastWorldViewportSize;
 
 		public Size WorldFrameBufferSize => worldSheet.Size;
+
+		/// <summary>The OpenXR headset session, or null when rendering to a regular desktop display.</summary>
+		public IXrDevice Xr => Window.Xr;
+
+		/// <summary>Quads to present in the headset for the current frame.</summary>
+		public readonly List<XrQuad> XrQuads = [];
+
+		Rectangle worldViewport;
+
+		/// <summary>
+		/// The region of the screen (in UI coordinates) that the world is rendered into.
+		/// Defaults to the whole window. XR mode shrinks it to leave room for the HUD panels.
+		/// </summary>
+		public Rectangle WorldViewport
+		{
+			get => worldViewport.IsEmpty ? new Rectangle(int2.Zero, Resolution) : worldViewport;
+			set => worldViewport = value;
+		}
+
+		/// <summary>Size of <see cref="WorldViewport"/> in native (unscaled) pixels.</summary>
+		public Size WorldViewportNativeSize
+		{
+			get
+			{
+				if (worldViewport.IsEmpty)
+					return NativeResolution;
+
+				var resolution = Resolution;
+				var native = NativeResolution;
+				return new Size(worldViewport.Width * native.Width / resolution.Width, worldViewport.Height * native.Height / resolution.Height);
+			}
+		}
+
 		public int WorldDownscaleFactor { get; private set; } = 1;
 
 		/// <summary>
@@ -265,7 +298,7 @@ namespace OpenRA
 
 				// If scaling by an integer factor (including 1:1) we must round the offset
 				// to an integer number of screen-space pixels to preserve sharp pixel edges
-				var renderScale = screenSprite.Size.X / (s.Width - 1f);
+				var renderScale = WorldViewport.Width * Window.EffectiveWindowScale / (s.Width - 1f);
 				if (float.IsInteger(renderScale))
 					fractionalOffset = Vector2.Round(fractionalOffset * renderScale) / renderScale;
 
@@ -295,16 +328,16 @@ namespace OpenRA
 				// Render the world buffer into the UI buffer
 				screenBuffer.Bind();
 
-				var scale = Window.EffectiveWindowScale;
+				var viewport = WorldViewport;
 
 				// We added 1 to worldSprite now we need to subtract.
 				var bufferScale = new Vector3(
-					(int)(screenSprite.Bounds.Width / scale) / (worldSprite.Size.X - 1),
-					(int)(-screenSprite.Bounds.Height / scale) / (worldSprite.Size.Y - 1),
+					viewport.Width / (worldSprite.Size.X - 1),
+					viewport.Height / (worldSprite.Size.Y - 1),
 					1f);
 
 				SpriteRenderer.EnablePixelArtScaling(true);
-				RgbaSpriteRenderer.DrawSprite(worldSprite, Vector3.Zero, bufferScale);
+				RgbaSpriteRenderer.DrawSprite(worldSprite, new Vector3(viewport.X, viewport.Y, 0), bufferScale);
 				Flush();
 				SpriteRenderer.EnablePixelArtScaling(false);
 			}
@@ -345,6 +378,9 @@ namespace OpenRA
 			Flush();
 
 			screenBuffer.Unbind();
+
+			// Present the finished frame in the headset before drawing the desktop mirror
+			Xr?.EndFrame(screenBuffer, XrQuads);
 
 			// Render the compositor buffers to the screen
 			// HACK / PERF: Fudge the coordinates to cover the actual window while keeping the buffer viewport parameters

@@ -379,6 +379,44 @@ namespace OpenRA
 		}
 	}
 
+	[YamlNode("Xr", shared: true)]
+	public class XrSettings : SettingsModule
+	{
+		[Desc("Run the game in an OpenXR headset (e.g. SteamVR) as a tabletop board with floating HUD panels.")]
+		public bool Enabled = false;
+
+		[Desc("How the real world is shown around the board: Auto, ChromaKey, AlphaBlend or Off.")]
+		public XrPassthroughMode Passthrough = XrPassthroughMode.Auto;
+
+		[Desc("Background color used by ChromaKey passthrough. Configure the same color in your streaming client (e.g. Virtual Desktop).")]
+		public Color KeyColor = Color.FromArgb(255, 0, 255);
+
+		[Desc("Size of the offscreen virtual screen the game is rendered to.")]
+		public int2 VirtualScreenSize = new(2048, 1024);
+
+		[Desc("Width of the HUD strip on the right edge of the virtual screen that is shown as a separate sidebar panel.")]
+		public int SidebarWidth = 256;
+
+		[Desc("Physical width of the board in meters.")]
+		public float BoardWidth = 0.9f;
+
+		[Desc("Board pose in the stage reference space. Set automatically when the board is placed.")]
+		public bool BoardPlaced = false;
+		public float BoardX = 0;
+		public float BoardY = 0.75f;
+		public float BoardZ = -0.5f;
+		public float BoardYaw = 0;
+
+		[Desc("Use the left controller as the pointer instead of the right.")]
+		public bool LeftHanded = false;
+
+		[Desc("Viewport scroll speed when panning with the thumbstick.")]
+		public float StickPanSpeed = 1.0f;
+
+		[Desc("Enable controller vibration feedback.")]
+		public bool Haptics = true;
+	}
+
 	public class Settings
 	{
 		readonly string settingsFile;
@@ -389,6 +427,7 @@ namespace OpenRA
 		public readonly GraphicSettings Graphics;
 		public readonly ServerSettings Server;
 		public readonly DebugSettings Debug;
+		public readonly XrSettings Xr;
 
 		readonly Arguments args;
 		readonly TypeDictionary modules = [];
@@ -413,6 +452,7 @@ namespace OpenRA
 			Graphics = GetOrCreate<GraphicSettings>(null);
 			Server = GetOrCreate<ServerSettings>(null);
 			Debug = GetOrCreate<DebugSettings>(null);
+			Xr = GetOrCreate<XrSettings>(null);
 		}
 
 		public T GetOrCreate<T>(ObjectCreator objectCreator, string mod = null) where T : SettingsModule

@@ -80,6 +80,9 @@ namespace OpenRA
 		GLProfile GLProfile { get; }
 
 		GLProfile[] SupportedGLProfiles { get; }
+
+		/// <summary>The OpenXR headset session, or null when running on a regular desktop display.</summary>
+		IXrDevice Xr { get; }
 	}
 
 	public interface IGraphicsContext : IDisposable

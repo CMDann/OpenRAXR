@@ -31,7 +31,7 @@ Container@INGAME_ROOT:
 				LogicTicker@DISCONNECT_WATCHER:
 					Logic: DisconnectWatcherLogic
 				Label@MISSION_TEXT:
-					X: WINDOW_WIDTH / 2 - 256
+					X: WORLD_LEFT + WORLD_WIDTH / 2 - 256
 					Y: 23
 					Width: 512
 					Height: 25
@@ -39,11 +39,15 @@ Container@INGAME_ROOT:
 					Align: Center
 					Contrast: true
 				WorldInteractionController@INTERACTION_CONTROLLER:
-					Width: WINDOW_WIDTH
-					Height: WINDOW_HEIGHT
+					X: WORLD_LEFT
+					Y: WORLD_TOP
+					Width: WORLD_WIDTH
+					Height: WORLD_HEIGHT
 				ViewportController:
-					Width: WINDOW_WIDTH
-					Height: WINDOW_HEIGHT
+					X: WORLD_LEFT
+					Y: WORLD_TOP
+					Width: WORLD_WIDTH
+					Height: WORLD_HEIGHT
 					TooltipContainer: TOOLTIP_CONTAINER
 					ZoomInKey: ZoomIn
 					ZoomOutKey: ZoomOut
@@ -59,7 +63,7 @@ Container@INGAME_ROOT:
 					BookmarkRestoreKeyPrefix: MapBookmarkRestore
 					BookmarkKeyCount: 4
 				StrategicProgress@STRATEGIC_PROGRESS:
-					X: WINDOW_WIDTH / 2
+					X: WORLD_LEFT + WORLD_WIDTH / 2
 					Y: 40
 				Container@PLAYER_ROOT:
 				Container@PERF_ROOT:

@@ -25,6 +25,8 @@ namespace OpenRA.Platforms.Default
 		bool disposed;
 		bool scissored;
 
+		internal uint ID => framebuffer;
+
 		public FrameBuffer(Size size, ITextureInternal texture, Color clearColor)
 		{
 			this.size = size;

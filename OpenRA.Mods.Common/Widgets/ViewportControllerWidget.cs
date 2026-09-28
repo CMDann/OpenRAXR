@@ -196,7 +196,9 @@ namespace OpenRA.Mods.Common.Widgets
 			else if (!isStandardScrolling)
 			{
 				edgeDirections = ScrollDirection.None;
-				if (Game.Settings.Game.ViewportEdgeScroll && Game.Renderer.WindowHasInputFocus)
+
+				// Edge scrolling is disabled in XR mode, where it would trigger whenever the pointer leaves the board
+				if (Game.Settings.Game.ViewportEdgeScroll && Game.Renderer.WindowHasInputFocus && Game.Renderer.Xr == null)
 					edgeDirections = CheckForDirections();
 
 				if (Ui.KeyboardFocusWidget != null)
@@ -486,13 +488,14 @@ namespace OpenRA.Mods.Common.Widgets
 		{
 			var margin = Game.Settings.Game.ViewportEdgeScrollMargin;
 			var directions = ScrollDirection.None;
-			if (Viewport.LastMousePos.X < margin)
+			var bounds = Game.Renderer.WorldViewport;
+			if (Viewport.LastMousePos.X < bounds.Left + margin)
 				directions |= ScrollDirection.Left;
-			if (Viewport.LastMousePos.Y < margin)
+			if (Viewport.LastMousePos.Y < bounds.Top + margin)
 				directions |= ScrollDirection.Up;
-			if (Viewport.LastMousePos.X >= Game.Renderer.Resolution.Width - margin)
+			if (Viewport.LastMousePos.X >= bounds.Right - margin)
 				directions |= ScrollDirection.Right;
-			if (Viewport.LastMousePos.Y >= Game.Renderer.Resolution.Height - margin)
+			if (Viewport.LastMousePos.Y >= bounds.Bottom - margin)
 				directions |= ScrollDirection.Down;
 
 			return directions;

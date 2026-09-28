@@ -31,6 +31,23 @@ function All-Command
 		[Net.ServicePointManager]::SecurityProtocol = 'Tls12'
 		(New-Object System.Net.WebClient).DownloadFile("https://github.com/OpenRA/GeoIP-Database/releases/download/monthly/IP2LOCATION-LITE-DB1.IPV6.BIN.ZIP", $target)
 	}
+
+	# The Khronos OpenXR loader is required for XR (headset) mode. Windows does not ship it, so bundle it next to the game.
+	$loaderArch = "x64"
+	if (!(Test-Path "bin/openxr_loader.dll"))
+	{
+		echo "Downloading the Khronos OpenXR loader."
+		$loaderVersion = "1.1.63"
+		$zip = Join-Path $pwd.ToString() "openxr_loader_windows.zip"
+		[Net.ServicePointManager]::SecurityProtocol = 'Tls12'
+		(New-Object System.Net.WebClient).DownloadFile("https://github.com/KhronosGroup/OpenXR-SDK-Source/releases/download/release-$loaderVersion/openxr_loader_windows-$loaderVersion.zip", $zip)
+		Add-Type -AssemblyName System.IO.Compression.FileSystem
+		$archive = [System.IO.Compression.ZipFile]::OpenRead($zip)
+		$entry = $archive.Entries | Where-Object { $_.FullName -eq "$loaderArch/bin/openxr_loader.dll" }
+		if ($entry) { [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, (Join-Path $pwd.ToString() "bin/openxr_loader.dll"), $true) }
+		$archive.Dispose()
+		Remove-Item $zip
+	}
 }
 
 function Clean-Command

@@ -83,7 +83,7 @@ namespace OpenRA.Graphics
 			private set
 			{
 				zoom = value;
-				ViewportSize = Size.FromVector(1f / zoom * Game.Renderer.NativeResolution.ToVector2());
+				ViewportSize = Size.FromVector(1f / zoom * Game.Renderer.WorldViewportNativeSize.ToVector2());
 				cellsDirty = true;
 				allCellsDirty = true;
 			}
@@ -94,7 +94,7 @@ namespace OpenRA.Graphics
 
 		public void OverrideDefaultHeight(float height)
 		{
-			defaultScale = viewportSizes.DefaultScale * Game.Renderer.NativeResolution.Height / height;
+			defaultScale = viewportSizes.DefaultScale * Game.Renderer.WorldViewportNativeSize.Height / height;
 			overrideUserScale = true;
 			UpdateViewportZooms(false);
 		}
@@ -193,7 +193,7 @@ namespace OpenRA.Graphics
 
 		static float CalculateMinimumZoom(float minHeight, float maxHeight)
 		{
-			var h = Game.Renderer.NativeResolution.Height;
+			var h = Game.Renderer.WorldViewportNativeSize.Height;
 
 			// Check the easy case: the native resolution is within the maximum limit
 			// Also catches the case where the user may force a resolution smaller than the minimum window size
@@ -236,7 +236,7 @@ namespace OpenRA.Graphics
 
 			MaxZoom = Math.Min(
 				MinZoom * viewportSizes.MaxZoomScale,
-				Game.Renderer.NativeResolution.Height * defaultScale / viewportSizes.MaxZoomWindowHeight);
+				Game.Renderer.WorldViewportNativeSize.Height * defaultScale / viewportSizes.MaxZoomWindowHeight);
 
 			if (unlockMinZoom)
 			{
@@ -253,7 +253,7 @@ namespace OpenRA.Graphics
 				Zoom = Zoom.Clamp(MinZoom, MaxZoom);
 
 			var minZoom = unlockMinZoom ? unlockedMinZoom : MinZoom;
-			var maxSize = Size.FromVector(1f / minZoom * Game.Renderer.NativeResolution.ToVector2());
+			var maxSize = Size.FromVector(1f / minZoom * Game.Renderer.WorldViewportNativeSize.ToVector2());
 			Game.Renderer.SetMaximumViewportSize(maxSize);
 
 			foreach (var t in worldRenderer.World.WorldActor.TraitsImplementing<INotifyViewportZoomExtentsChanged>())
@@ -327,14 +327,20 @@ namespace OpenRA.Graphics
 					yield return new MPos(u, v);
 		}
 
+		// View coordinates are relative to the window, but the world may only fill part of it (see Renderer.WorldViewport)
+		static Vector2 WorldViewportOrigin => Game.Renderer.WorldViewport.Location.ToVector2();
+
+		// The XR virtual screen is always laid out at 1:1 regardless of the desktop UI scale
+		float UIScale => Game.Renderer.Xr != null ? 1f : graphicSettings.UIScale;
+
 		public int2 ViewToWorldPx(int2 view)
-			=> int2.FromVector(graphicSettings.UIScale / Zoom * view.ToVector2() + CenterLocation - (ViewportSize.ToInt2() / 2).ToVector2());
+			=> int2.FromVector(UIScale / Zoom * (view.ToVector2() - WorldViewportOrigin) + CenterLocation - (ViewportSize.ToInt2() / 2).ToVector2());
 
 		public int2 WorldToViewPx(int2 world)
-			=> int2.FromVector(Zoom / graphicSettings.UIScale * (world.ToVector2() - CenterLocation + (ViewportSize.ToInt2() / 2).ToVector2()));
+			=> int2.FromVector(Zoom / UIScale * (world.ToVector2() - CenterLocation + (ViewportSize.ToInt2() / 2).ToVector2()) + WorldViewportOrigin);
 
 		public int2 WorldToViewPx(in Vector3 world)
-			=> int2.FromVector(Zoom / graphicSettings.UIScale * (world.AsVector2() - CenterLocation + ViewportSize.ToVector2() / 2));
+			=> int2.FromVector(Zoom / UIScale * (world.AsVector2() - CenterLocation + ViewportSize.ToVector2() / 2) + WorldViewportOrigin);
 
 		public void Center(IEnumerable<Actor> actors)
 		{

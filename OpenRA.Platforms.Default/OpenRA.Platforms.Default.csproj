@@ -4,5 +4,7 @@
 		<PackageReference Include="OpenRA-Freetype6" Version="1.0.12 " />
 		<PackageReference Include="OpenRA-OpenAL-CS" Version="1.0.23 " />
 		<PackageReference Include="OpenRA-SDL2-CS" Version="1.0.44" />
+		<PackageReference Include="Silk.NET.OpenXR" Version="2.23.0" />
+		<PackageReference Include="Silk.NET.OpenXR.Extensions.KHR" Version="2.23.0" />
 	</ItemGroup>
 </Project>

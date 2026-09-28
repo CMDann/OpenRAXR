@@ -45,6 +45,7 @@ namespace OpenRA
 		public static bool HideCursor;
 
 		static WorldRenderer worldRenderer;
+		static XrTabletop xrTabletop;
 		static string modLaunchWrapper;
 
 		internal static OrderManager OrderManager;
@@ -442,6 +443,9 @@ namespace OpenRA
 					Renderer = new Renderer(platform, Settings.Graphics, manifest.RendererConstants.VertexBatchSize);
 					Sound = new Sound(platform, Settings.Sound);
 
+					if (Renderer.Xr != null)
+						InitializeXr(Renderer.Xr);
+
 					break;
 				}
 				catch (Exception e)
@@ -456,6 +460,14 @@ namespace OpenRA
 			}
 
 			InitializeMod(manifest, args);
+		}
+
+		static void InitializeXr(IXrDevice xr)
+		{
+			xrTabletop = new XrTabletop(xr, Settings.Xr);
+			Renderer.WorldViewport = xrTabletop.WorldRect;
+
+			Console.WriteLine($"XR: Tabletop mode enabled ({xr.RuntimeName}, {xr.SystemName}, blend mode {xr.BlendMode}, chroma key {xr.ChromaKeyEnabled})");
 		}
 
 		public static IPlatform CreatePlatform(string platformName)
@@ -704,6 +716,14 @@ namespace OpenRA
 			{
 				++RenderFrame;
 
+				// Wait for the headset to request a new frame and apply the controller input to the game
+				var xr = Renderer.Xr;
+				if (xr != null)
+				{
+					xr.BeginFrame();
+					xrTabletop.Update(worldRenderer, OrderManager.World, Renderer.XrQuads);
+				}
+
 				// Prepare renderables (i.e. render voxels) before calling BeginFrame
 				using (new PerfSample("render_prepare"))
 				{
@@ -830,6 +850,11 @@ namespace OpenRA
 					renderInterval = 1000 / maxFramerate;
 				}
 
+				// In XR mode xrWaitFrame blocks until the headset needs the next frame, which paces rendering to its refresh rate
+				var xrActive = Renderer.Xr != null && Renderer.Xr.IsSessionRunning;
+				if (xrActive)
+					renderInterval = 0;
+
 				// Tick as fast as possible while restoring game saves, capping rendering at 5 FPS
 				if (OrderManager.World != null && OrderManager.World.IsLoadingGameSave)
 				{
@@ -862,7 +887,10 @@ namespace OpenRA
 
 					var haveSomeTimeUntilNextLogic = now < nextLogic;
 					var isTimeToRender = now >= nextRender;
-					if (!Renderer.WindowIsSuspended && ((isTimeToRender && haveSomeTimeUntilNextLogic) || forceRender))
+
+					// The headset keeps rendering even if the desktop mirror window is minimized
+					var suspended = Renderer.WindowIsSuspended && !xrActive;
+					if (!suspended && ((isTimeToRender && haveSomeTimeUntilNextLogic) || forceRender))
 					{
 						nextRender = now + renderInterval;
 
@@ -879,7 +907,7 @@ namespace OpenRA
 					}
 
 					// Simulate a render tick if it was time to render but we skip actually rendering
-					if (Renderer.WindowIsSuspended && isTimeToRender)
+					if (suspended && isTimeToRender)
 					{
 						// Make sure that nextUpdate is set to a proper minimum interval
 						nextRender = now + renderInterval;

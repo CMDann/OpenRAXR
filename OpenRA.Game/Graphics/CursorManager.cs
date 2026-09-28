@@ -43,7 +43,9 @@ namespace OpenRA.Graphics
 		public CursorManager(ModData modData)
 		{
 			graphicSettings = Game.Settings.Graphics;
-			hardwareCursorsDisabled = graphicSettings.DisableHardwareCursors;
+
+			// XR mode needs the cursor drawn into the virtual screen so that it shows up in the headset
+			hardwareCursorsDisabled = graphicSettings.DisableHardwareCursors || Game.Renderer?.Xr != null;
 			SheetBuilder = new SheetBuilder(SheetType.BGRA, modData.Manifest.RendererConstants.CursorSheetSize);
 
 			// Overwrite previous definitions if there are duplicates

@@ -231,6 +231,8 @@ namespace OpenRA.Platforms.Default
 		public const int GL_FRAMEBUFFER = 0x8D40;
 		public const int GL_RENDERBUFFER = 0x8D41;
 		public const int GL_COLOR_ATTACHMENT0 = 0x8CE0;
+		public const int GL_READ_FRAMEBUFFER = 0x8CA8;
+		public const int GL_DRAW_FRAMEBUFFER = 0x8CA9;
 		public const int GL_DEPTH_ATTACHMENT = 0x8D00;
 		public const int GL_FRAMEBUFFER_COMPLETE = 0x8CD5;
 		public const int GL_FRAMEBUFFER_BINDING = 0x8CA6;
@@ -503,6 +505,10 @@ namespace OpenRA.Platforms.Default
 		public delegate int CheckFramebufferStatus(int target);
 		public static CheckFramebufferStatus glCheckFramebufferStatus { get; private set; }
 
+		public delegate void BlitFramebuffer(int srcX0, int srcY0, int srcX1, int srcY1,
+			int dstX0, int dstY0, int dstX1, int dstY1, int mask, int filter);
+		public static BlitFramebuffer glBlitFramebuffer { get; private set; }
+
 		#endregion
 
 		public static void Initialize()
@@ -655,6 +661,7 @@ namespace OpenRA.Platforms.Default
 				glDeleteRenderbuffers = Bind<DeleteRenderbuffers>("glDeleteRenderbuffers");
 				glFramebufferRenderbuffer = Bind<FramebufferRenderbuffer>("glFramebufferRenderbuffer");
 				glCheckFramebufferStatus = Bind<CheckFramebufferStatus>("glCheckFramebufferStatus");
+				glBlitFramebuffer = Bind<BlitFramebuffer>("glBlitFramebuffer");
 			}
 			catch (Exception e)
 			{
